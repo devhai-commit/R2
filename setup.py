@@ -35,6 +35,7 @@ setup(
             'apply_kfs_layout = r2_sim.apply_kfs_layout:main',
             'navigator = r2_sim.navigator:main',
             'kfs_collector = r2_sim.kfs_collector:main',
+            'r1_sim = r2_sim.r1_sim:main',
         ],
     },
 )

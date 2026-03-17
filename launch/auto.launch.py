@@ -1,12 +1,13 @@
 """
-auto.launch.py — launch simulation + autonomous KFS collection.
+auto.launch.py — launch full match simulation.
 
 Starts:
   1. Gazebo with the meihua_forest world
   2. robot_state_publisher
   3. ros_gz_bridge  (bridges /cmd_vel, /odom, /tf)
-  4. navigator      (waypoint follower)
-  5. kfs_collector   (task planner / state machine)
+  4. r1_sim         (scripted R1 behaviour — staff pick + assembly)
+  5. navigator      (R2 waypoint follower)
+  6. kfs_collector  (R2 full match state machine)
 """
 
 import os
@@ -21,14 +22,10 @@ import xacro
 def generate_launch_description():
     pkg = get_package_share_directory('r2_sim')
 
-    # ── World ────────────────────────────────────────────────────────────────
+    # ── Paths ────────────────────────────────────────────────────────────────
     world_file = os.path.join(pkg, 'worlds', 'meihua_forest.sdf')
-
-    # ── Robot description ────────────────────────────────────────────────────
     xacro_file = os.path.join(pkg, 'urdf', 'r2_robot.urdf.xacro')
     robot_description = xacro.process_file(xacro_file).toxml()
-
-    # ── Config files ────────────────────────────────────────────────────────
     kfs_config = os.path.join(pkg, 'config', 'kfs_layout.yaml')
     bridge_config = os.path.join(pkg, 'config', 'ros_gz_bridge.yaml')
 
@@ -46,7 +43,7 @@ def generate_launch_description():
             parameters=[{'robot_description': robot_description}],
         ),
 
-        # 3. Gazebo ↔ ROS2 bridge (YAML config for reliable type mapping)
+        # 3. Gazebo ↔ ROS2 bridge
         Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
@@ -55,14 +52,21 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # 4. Waypoint navigator
+        # 4. R1 simulator (scripted, no physics)
+        Node(
+            package='r2_sim',
+            executable='r1_sim',
+            output='screen',
+        ),
+
+        # 5. R2 waypoint navigator
         Node(
             package='r2_sim',
             executable='navigator',
             output='screen',
         ),
 
-        # 5. KFS collector (autonomous task planner)
+        # 6. R2 full match state machine
         Node(
             package='r2_sim',
             executable='kfs_collector',
@@ -71,6 +75,8 @@ def generate_launch_description():
                 'team': 'r2',
                 'collect_duration': 2.0,
                 'place_duration': 2.0,
+                'pick_spearhead_duration': 2.0,
+                'assemble_duration': 3.0,
                 'start_x': -1.34,
                 'start_y':  5.54,
                 'start_yaw': 3.14159265,

@@ -64,6 +64,7 @@ def generate_launch_description():
                 ('/cmd_vel', '/r1/cmd_vel'),
                 ('/odom', '/r1/odom'),
                 ('/goal_pose', '/r1/goal_pose'),
+                ('/path', '/r1/path'),
                 ('/waypoint_reached', '/r1/waypoint_reached'),
             ],
             output='screen',

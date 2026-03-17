@@ -19,7 +19,10 @@ import yaml
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import String
+
+from r2_sim.astar_planner import FieldPlanner
 
 
 # ── Field geometry ───────────────────────────────────────────────────────────
@@ -37,6 +40,14 @@ FOREST_KEYS = [('left_forest', 'lf'), ('right_forest', 'rf')]
 SPEARHEAD_RACK  = (-0.30, 4.69)   # approach from the left side of center rack
 STAFF_RACK_LEFT = (-3.44, 6.065)  # assembly happens here — R2 brings spearhead to R1
 R2_ENTRANCE     = (-3.045, 4.165) # entrance to Meihua Forest
+
+# Forest block edges (platforms are 1.2×1.2m, touching edge-to-edge)
+# Left forest:  x ∈ [-4.8, -1.2],  y ∈ [-2.4, 2.4]
+# Right forest: x ∈ [ 1.2,  4.8],  y ∈ [-2.4, 2.4]
+# Robot approaches KFS from the nearest forest edge.
+_LF_BOUNDS = {'x_min': -4.8, 'x_max': -1.2, 'y_min': -2.4, 'y_max': 2.4}
+_RF_BOUNDS = {'x_min':  1.2, 'x_max':  4.8, 'y_min': -2.4, 'y_max': 2.4}
+_APPROACH_OFFSET = 0.45   # metres outside the forest edge
 
 ARENA_SLOTS = [
     {'name': 'arena_mid_left',   'x': -1.8, 'y': -4.5},
@@ -89,7 +100,12 @@ class KFSCollector(Node):
         self.start_y = self.get_parameter('start_y').value
         self.start_yaw = self.get_parameter('start_yaw').value
 
+        # -- A* planner --
+        self.planner = FieldPlanner(resolution=0.05, robot_radius=0.25)
+        self.get_logger().info('A* field planner initialized')
+
         # -- Pub / Sub --
+        self.pub_path = self.create_publisher(Path, '/path', 10)
         self.pub_goal = self.create_publisher(PoseStamped, '/goal_pose', 10)
         self.pub_status = self.create_publisher(String, '/kfs_status', 10)
         self.sub_reached = self.create_subscription(
@@ -97,6 +113,9 @@ class KFSCollector(Node):
         )
         self.sub_r1 = self.create_subscription(
             String, '/r1_status', self._r1_status_cb, 10,
+        )
+        self.sub_odom = self.create_subscription(
+            Odometry, '/odom', self._odom_cb, 10,
         )
 
         # -- Load KFS targets --
@@ -111,6 +130,8 @@ class KFSCollector(Node):
         self.collected = []
         self.action_start = None
         self.r1_state = ''
+        self.odom_x = 0.0
+        self.odom_y = 0.0
 
         self.create_timer(0.1, self._tick)
 
@@ -122,6 +143,32 @@ class KFSCollector(Node):
             self.get_logger().info(f'  → {t["name"]}  ({t["x"]:.1f}, {t["y"]:.1f})')
 
     # ── Load & plan KFS targets ──────────────────────────────────────────────
+    @staticmethod
+    def _approach_point(kfs_x, kfs_y, forest):
+        """Compute a reachable approach point on the nearest forest edge."""
+        bounds = _LF_BOUNDS if forest == 'lf' else _RF_BOUNDS
+
+        # Distances to each edge
+        edges = {
+            'left':   abs(kfs_x - bounds['x_min']),
+            'right':  abs(kfs_x - bounds['x_max']),
+            'top':    abs(kfs_y - bounds['y_max']),
+            'bottom': abs(kfs_y - bounds['y_min']),
+        }
+        nearest = min(edges, key=edges.get)
+
+        ax, ay = kfs_x, kfs_y
+        if nearest == 'left':
+            ax = bounds['x_min'] - _APPROACH_OFFSET
+        elif nearest == 'right':
+            ax = bounds['x_max'] + _APPROACH_OFFSET
+        elif nearest == 'top':
+            ay = bounds['y_max'] + _APPROACH_OFFSET
+        elif nearest == 'bottom':
+            ay = bounds['y_min'] - _APPROACH_OFFSET
+
+        return ax, ay
+
     def _load_targets(self, config_path: str):
         with open(config_path) as f:
             layout = yaml.safe_load(f) or {}
@@ -141,10 +188,15 @@ class KFSCollector(Node):
                     if label in ('none', 'null', '~', ''):
                         continue
                     if label == self.team:
+                        kx = _X[forest][col]
+                        ky = _Y[row]
+                        ax, ay = self._approach_point(kx, ky, forest)
                         targets.append({
                             'name': f'kfs_{forest}_{row}{col}',
-                            'x': _X[forest][col],
-                            'y': _Y[row],
+                            'x': ax,     # approach position (navigable)
+                            'y': ay,
+                            'kfs_x': kx, # actual KFS position (on platform)
+                            'kfs_y': ky,
                         })
 
         # Order from the Meihua Forest entrance, not the start zone
@@ -168,6 +220,10 @@ class KFSCollector(Node):
         return ordered
 
     # ── Callbacks ────────────────────────────────────────────────────────────
+    def _odom_cb(self, msg: Odometry):
+        self.odom_x = msg.pose.pose.position.x
+        self.odom_y = msg.pose.pose.position.y
+
     def _r1_status_cb(self, msg: String):
         self.r1_state = msg.data
 
@@ -200,14 +256,14 @@ class KFSCollector(Node):
         if self.state == State.IDLE:
             self.get_logger().info('=== Phase 1: Martial Club ===')
             self._set_state(State.NAV_TO_SPEARHEAD)
-            self._send_goal(*SPEARHEAD_RACK)
+            self._navigate_to(*SPEARHEAD_RACK)
             self._pub('NAV_TO_SPEARHEAD')
 
         elif self.state == State.PICKING_SPEARHEAD:
             if self._timer_done():
                 self.get_logger().info('Spearhead picked — heading to staff rack for assembly')
                 self._set_state(State.NAV_TO_ASSEMBLY)
-                self._send_goal(*STAFF_RACK_LEFT)
+                self._navigate_to(*STAFF_RACK_LEFT)
                 self._pub('NAV_TO_ASSEMBLY')
 
         elif self.state == State.WAITING_FOR_R1:
@@ -276,13 +332,13 @@ class KFSCollector(Node):
     def _navigate_to_kfs(self):
         target = self.targets[self.kfs_idx]
         self._set_state(State.NAV_TO_KFS)
-        self._send_goal(target['x'], target['y'])
+        self._navigate_to(target['x'], target['y'])
         self._pub(f'NAV_TO_KFS {target["name"]}')
 
     def _navigate_to_arena(self):
         slot = ARENA_SLOTS[self.arena_idx]
         self._set_state(State.NAV_TO_ARENA)
-        self._send_goal(slot['x'], slot['y'])
+        self._navigate_to(slot['x'], slot['y'])
         self._pub(f'NAV_TO_ARENA {slot["name"]}')
 
     # ── Coordinate transform ─────────────────────────────────────────────────
@@ -294,16 +350,53 @@ class KFSCollector(Node):
         s = math.sin(-self.start_yaw)
         return c * dx - s * dy, s * dx + c * dy
 
-    def _send_goal(self, wx: float, wy: float):
-        ox, oy = self._world_to_odom(wx, wy)
-        msg = PoseStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
-        msg.pose.position.x = ox
-        msg.pose.position.y = oy
-        self.pub_goal.publish(msg)
+    def _odom_to_world(self, ox: float, oy: float):
+        """Transform odom-frame (x, y) back to world frame."""
+        c = math.cos(self.start_yaw)
+        s = math.sin(self.start_yaw)
+        wx = c * ox - s * oy + self.start_x
+        wy = s * ox + c * oy + self.start_y
+        return wx, wy
+
+    def _navigate_to(self, wx: float, wy: float):
+        """Plan an A* path from current position to (wx, wy) in world frame."""
+        # Get current world position from odom
+        cur_wx, cur_wy = self._odom_to_world(self.odom_x, self.odom_y)
+
+        # Run A* in world frame
+        world_path = self.planner.plan(cur_wx, cur_wy, wx, wy)
+
+        if not world_path:
+            self.get_logger().warn(
+                f'A* found no path to ({wx:.2f}, {wy:.2f}) — sending direct goal'
+            )
+            # Fallback: send single goal directly
+            ox, oy = self._world_to_odom(wx, wy)
+            msg = PoseStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = 'odom'
+            msg.pose.position.x = ox
+            msg.pose.position.y = oy
+            self.pub_goal.publish(msg)
+            return
+
+        # Convert world path to odom frame and publish as Path
+        path_msg = Path()
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+        path_msg.header.frame_id = 'odom'
+
+        for pwx, pwy in world_path:
+            ox, oy = self._world_to_odom(pwx, pwy)
+            pose = PoseStamped()
+            pose.header = path_msg.header
+            pose.pose.position.x = ox
+            pose.pose.position.y = oy
+            path_msg.poses.append(pose)
+
+        self.pub_path.publish(path_msg)
         self.get_logger().info(
-            f'Goal  world({wx:.2f}, {wy:.2f}) → odom({ox:.2f}, {oy:.2f})'
+            f'A* path to world({wx:.2f}, {wy:.2f}): '
+            f'{len(world_path)} waypoints'
         )
 
     # ── Utilities ────────────────────────────────────────────────────────────

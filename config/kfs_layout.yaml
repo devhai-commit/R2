@@ -1,0 +1,29 @@
+# KFS Layout Configuration
+# ──────────────────────────────────────────────────────────────────────────────
+# Edit this file, then run:  python3 scripts/apply_kfs_layout.py
+#
+# Labels per cell:
+#   r1   — red   (scores for Team 1 / R1)
+#   r2   — blue  (scores for Team 2 / R2)
+#   fake — grey  (decoy, no score)
+#   ~    — no KFS on this platform
+#
+# Grid reference:
+#   Left  forest cols: c1 (x=-4.2 m)  c2 (x=-3.0 m)  c3 (x=-1.8 m)
+#   Right forest cols: c1 (x=+1.8 m)  c2 (x=+3.0 m)  c3 (x=+4.2 m)
+#   Rows: r1 (y=+1.8 m)  r2 (y=+0.6 m)  r3 (y=-0.6 m)  r4 (y=-1.8 m)
+# ──────────────────────────────────────────────────────────────────────────────
+
+left_forest:
+  #      c1     c2     c3
+  r1: [~,     ~,     ~    ]   # y=+1.8
+  r2: [r1,  r2,  r2 ]   # y=+0.6
+  r3: [r2,  fake,  r1 ]   # y=-0.6
+  r4: [r2,  r1,  fake ]   # y=-1.8
+
+right_forest:
+  #      c1     c2     c3
+  r1: [~,     ~,     ~    ]   # y=+1.8
+  r2: [fake,  fake,  fake ]   # y=+0.6
+  r3: [fake,  fake,  fake ]   # y=-0.6
+  r4: [fake,  fake,  fake ]   # y=-1.8

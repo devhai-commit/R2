@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<robot name="r2_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find r2_sim)/urdf/components/chassis.xacro"/>
+  <xacro:include filename="$(find r2_sim)/urdf/components/wheel.xacro"/>
+  <xacro:include filename="$(find r2_sim)/urdf/components/tower.xacro"/>
+
+  <!-- Rear driven wheels (differential drive) -->
+  <!-- x=-0.20: rear of chassis; y=±0.225: just outside chassis edge; z=0 -->
+  <xacro:wheel name="wheel_rear_left"
+               parent="base_link"
+               x="-0.20" y=" 0.225" z="0"/>
+  <xacro:wheel name="wheel_rear_right"
+               parent="base_link"
+               x="-0.20" y="-0.225" z="0"/>
+
+  <!-- Front passive casters -->
+  <xacro:caster name="caster_front_left"
+                parent="base_link"
+                x=" 0.22" y=" 0.15"/>
+  <xacro:caster name="caster_front_right"
+                parent="base_link"
+                x=" 0.22" y="-0.15"/>
+
+  <!-- ===== Gazebo Plugins ===== -->
+
+  <!-- Differential drive: subscribes /cmd_vel, publishes /odom -->
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system"
+            name="gz::sim::systems::DiffDrive">
+      <left_joint>wheel_rear_left_joint</left_joint>
+      <right_joint>wheel_rear_right_joint</right_joint>
+      <wheel_separation>0.45</wheel_separation>
+      <wheel_radius>0.075</wheel_radius>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <topic>/cmd_vel</topic>
+      <odom_topic>/odom</odom_topic>
+      <tf_topic>/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+    </plugin>
+  </gazebo>
+
+  <!-- Joint state publisher: publishes /joint_states -->
+  <gazebo>
+    <plugin filename="gz-sim-joint-state-publisher-system"
+            name="gz::sim::systems::JointStatePublisher">
+      <topic>/joint_states</topic>
+    </plugin>
+  </gazebo>
+
+  <!-- Sensor plugin (required even without sensors, for future use) -->
+  <gazebo>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors"/>
+  </gazebo>
+
+</robot>

@@ -1,0 +1,22 @@
+<model name="z1_rack">
+  <static>true</static>
+
+  <link name="link">
+    <collision name="collision">
+      <geometry>
+        <mesh>
+          <uri>model://z1_rack/meshes/rack.stl</uri>
+        </mesh>
+      </geometry>
+    </collision>
+
+    <visual name="visual">
+      <geometry>
+        <mesh>
+          <uri>model://z1_rack/meshes/rack.stl</uri>
+        </mesh>
+      </geometry>
+    </visual>
+
+  </link>
+</model>

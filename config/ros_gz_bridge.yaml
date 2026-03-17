@@ -1,6 +1,7 @@
 # ros_gz_bridge topic configuration
-# Bridges Gazebo Transport ↔ ROS2 for the R2 robot simulation.
+# Bridges Gazebo Transport ↔ ROS2 for both R1 and R2 robots.
 
+# ── R2 (autonomous) ─────────────────────────────────────────────────────────
 - topic_name: "/cmd_vel"
   ros_type_name: "geometry_msgs/msg/Twist"
   gz_type_name: "gz.msgs.Twist"
@@ -14,4 +15,15 @@
 - topic_name: "/tf"
   ros_type_name: "tf2_msgs/msg/TFMessage"
   gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS
+
+# ── R1 (simulated manual) ───────────────────────────────────────────────────
+- topic_name: "/r1/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+- topic_name: "/r1/odom"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
   direction: GZ_TO_ROS

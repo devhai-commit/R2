@@ -1,13 +1,14 @@
 """
-auto.launch.py — launch full match simulation.
+auto.launch.py — launch full match simulation with both R1 and R2.
 
 Starts:
-  1. Gazebo with the meihua_forest world
-  2. robot_state_publisher
-  3. ros_gz_bridge  (bridges /cmd_vel, /odom, /tf)
-  4. r1_sim         (scripted R1 behaviour — staff pick + assembly)
-  5. navigator      (R2 waypoint follower)
-  6. kfs_collector  (R2 full match state machine)
+  1. Gazebo with the meihua_forest world (contains both robot models)
+  2. robot_state_publisher (R2)
+  3. ros_gz_bridge  (bridges R1 + R2 cmd_vel, odom, tf)
+  4. R1 navigator   (waypoint follower on /r1/* topics)
+  5. R1 sim         (scripted state machine — staff pick + assembly)
+  6. R2 navigator   (waypoint follower on default topics)
+  7. R2 kfs_collector (full match state machine)
 """
 
 import os
@@ -36,14 +37,14 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # 2. Robot state publisher
+        # 2. Robot state publisher (R2)
         Node(
             package='robot_state_publisher',
             executable='robot_state_publisher',
             parameters=[{'robot_description': robot_description}],
         ),
 
-        # 3. Gazebo ↔ ROS2 bridge
+        # 3. Gazebo ↔ ROS2 bridge (R1 + R2 topics)
         Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
@@ -52,21 +53,40 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # 4. R1 simulator (scripted, no physics)
+        # ── R1 ───────────────────────────────────────────────────────────
+
+        # 4. R1 waypoint navigator (remapped to /r1/* topics)
+        Node(
+            package='r2_sim',
+            executable='navigator',
+            name='r1_navigator',
+            remappings=[
+                ('/cmd_vel', '/r1/cmd_vel'),
+                ('/odom', '/r1/odom'),
+                ('/goal_pose', '/r1/goal_pose'),
+                ('/waypoint_reached', '/r1/waypoint_reached'),
+            ],
+            output='screen',
+        ),
+
+        # 5. R1 state machine (scripted — drives to staff rack, assembles)
         Node(
             package='r2_sim',
             executable='r1_sim',
             output='screen',
         ),
 
-        # 5. R2 waypoint navigator
+        # ── R2 ───────────────────────────────────────────────────────────
+
+        # 6. R2 waypoint navigator (default topics)
         Node(
             package='r2_sim',
             executable='navigator',
+            name='r2_navigator',
             output='screen',
         ),
 
-        # 6. R2 full match state machine
+        # 7. R2 full match state machine
         Node(
             package='r2_sim',
             executable='kfs_collector',

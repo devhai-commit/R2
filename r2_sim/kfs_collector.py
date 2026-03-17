@@ -34,9 +34,9 @@ COLS = ['c1', 'c2', 'c3']
 FOREST_KEYS = [('left_forest', 'lf'), ('right_forest', 'rf')]
 
 # Key world-frame positions (left team)
-SPEARHEAD_RACK = (-0.30, 4.69)   # approach from the left side of center rack
-ASSEMBLY_POINT = (-2.40, 5.20)   # meet R1 here
-R2_ENTRANCE    = (-3.045, 4.165) # entrance to Meihua Forest
+SPEARHEAD_RACK  = (-0.30, 4.69)   # approach from the left side of center rack
+STAFF_RACK_LEFT = (-3.44, 6.065)  # assembly happens here — R2 brings spearhead to R1
+R2_ENTRANCE     = (-3.045, 4.165) # entrance to Meihua Forest
 
 ARENA_SLOTS = [
     {'name': 'arena_mid_left',   'x': -1.8, 'y': -4.5},
@@ -205,9 +205,9 @@ class KFSCollector(Node):
 
         elif self.state == State.PICKING_SPEARHEAD:
             if self._timer_done():
-                self.get_logger().info('Spearhead picked — heading to assembly')
+                self.get_logger().info('Spearhead picked — heading to staff rack for assembly')
                 self._set_state(State.NAV_TO_ASSEMBLY)
-                self._send_goal(*ASSEMBLY_POINT)
+                self._send_goal(*STAFF_RACK_LEFT)
                 self._pub('NAV_TO_ASSEMBLY')
 
         elif self.state == State.WAITING_FOR_R1:

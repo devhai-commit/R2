@@ -1,58 +1,652 @@
 <?xml version="1.0"?>
-<robot name="r2_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="r2_robot">
 
-  <xacro:include filename="$(find r2_sim)/urdf/components/chassis.xacro"/>
-  <xacro:include filename="$(find r2_sim)/urdf/components/wheel.xacro"/>
-  <xacro:include filename="$(find r2_sim)/urdf/components/tower.xacro"/>
+  <!-- ============================================================ -->
+  <!-- R2 Robot - ABU Robocon 2026 "Kung Fu Quest"                  -->
+  <!-- Rocker-Bogie Mecanum Chassis + Lift + Gripper                -->
+  <!-- ============================================================ -->
 
-  <!-- Rear driven wheels (differential drive) -->
-  <!-- x=-0.20: rear of chassis; y=±0.225: just outside chassis edge; z=0 -->
-  <xacro:wheel name="wheel_rear_left"
-               parent="base_link"
-               x="-0.20" y=" 0.225" z="0"/>
-  <xacro:wheel name="wheel_rear_right"
-               parent="base_link"
-               x="-0.20" y="-0.225" z="0"/>
+  <!-- Constants (meters) -->
+  <xacro:property name="wheel_dia"      value="0.1012"/>
+  <xacro:property name="wheel_radius"   value="${wheel_dia/2}"/>
+  <xacro:property name="wheel_width"    value="0.050"/>
+  <xacro:property name="wheel_mass"     value="0.8"/>
 
-  <!-- Front passive casters -->
-  <xacro:caster name="caster_front_left"
-                parent="base_link"
-                x=" 0.22" y=" 0.15"/>
-  <xacro:caster name="caster_front_right"
-                parent="base_link"
-                x=" 0.22" y="-0.15"/>
+  <xacro:property name="body_l"         value="0.600"/>
+  <xacro:property name="body_w"         value="0.500"/>
+  <xacro:property name="body_h"         value="0.040"/>
+  <xacro:property name="body_mass"      value="8.0"/>
 
-  <!-- ===== Gazebo Plugins ===== -->
+  <xacro:property name="body_half_w"    value="0.250"/>
+  <xacro:property name="wheel_y_offset" value="0.290"/>
 
-  <!-- Differential drive: subscribes /cmd_vel, publishes /odom -->
+  <xacro:property name="front_wheel_x"  value="0.280"/>
+  <xacro:property name="mid_wheel_x"    value="0.000"/>
+  <xacro:property name="rear_wheel_x"   value="-0.280"/>
+
+  <xacro:property name="rocker_pivot_x" value="-0.050"/>
+  <xacro:property name="rocker_pivot_z" value="0.080"/>
+  <xacro:property name="chassis_z"      value="0.1306"/>
+
+  <xacro:property name="bogie_joint_x"  value="-0.100"/>
+
+  <xacro:property name="rocker_mass"    value="1.5"/>
+  <xacro:property name="bogie_mass"     value="1.0"/>
+
+  <xacro:property name="lift_base_x"    value="-0.240"/>
+  <xacro:property name="lift_base_z"    value="0.045"/>
+  <xacro:property name="lift_height"    value="0.350"/>
+  <xacro:property name="lift_mass"      value="3.0"/>
+  <xacro:property name="lift_max"       value="0.650"/>
+
+  <xacro:property name="gripper_mass"   value="2.0"/>
+  <xacro:property name="jaw_max_open"   value="0.210"/>
+
+  <!-- Materials -->
+  <material name="aluminum">
+    <color rgba="0.75 0.75 0.78 1.0"/>
+  </material>
+  <material name="dark_gray">
+    <color rgba="0.3 0.3 0.3 1.0"/>
+  </material>
+  <material name="black">
+    <color rgba="0.08 0.08 0.08 1.0"/>
+  </material>
+  <material name="orange">
+    <color rgba="1.0 0.5 0.0 1.0"/>
+  </material>
+  <material name="blue">
+    <color rgba="0.2 0.4 0.8 1.0"/>
+  </material>
+
+  <!-- ============================================================ -->
+  <!-- Macros                                                        -->
+  <!-- ============================================================ -->
+
+  <!-- Box inertia -->
+  <xacro:macro name="box_inertia" params="m x y z">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(y*y+z*z)/12}" ixy="0" ixz="0"
+               iyy="${m*(x*x+z*z)/12}" iyz="0"
+               izz="${m*(x*x+y*y)/12}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Cylinder inertia (along Y axis for wheels) -->
+  <xacro:macro name="cylinder_inertia_y" params="m r l">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(3*r*r+l*l)/12}" ixy="0" ixz="0"
+               iyy="${m*r*r/2}" iyz="0"
+               izz="${m*(3*r*r+l*l)/12}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Mecanum wheel macro (bracket + motor mount + wheel) -->
+  <!-- fdir1_x/fdir1_y: friction direction for mecanum roller simulation -->
+  <xacro:macro name="mecanum_wheel" params="name parent x y mesh_file bracket_side fdir1_x fdir1_y">
+
+    <!-- Bracket + motor mount (fixed to parent arm, does NOT rotate with wheel) -->
+    <link name="${name}_mount">
+      <visual>
+        <geometry>
+          <mesh filename="file://$(find r2_sim)/meshes/wheel_bracket_${bracket_side}.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 ${-y/2} 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="0.038" length="${(y*y)**0.5}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.5"/>
+        <inertia ixx="2e-4" ixy="0" ixz="0" iyy="2e-4" iyz="0" izz="2e-4"/>
+      </inertial>
+    </link>
+
+    <joint name="${name}_mount_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${name}_mount"/>
+      <origin xyz="${x} ${y} 0" rpy="0 0 0"/>
+    </joint>
+
+    <!-- Wheel (rotates inside bracket) — sphere collision for mecanum friction -->
+    <link name="${name}">
+      <visual>
+        <geometry>
+          <mesh filename="file://$(find r2_sim)/meshes/${mesh_file}" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="dark_gray"/>
+      </visual>
+      <collision>
+        <geometry>
+          <sphere radius="${wheel_radius}"/>
+        </geometry>
+      </collision>
+      <xacro:cylinder_inertia_y m="${wheel_mass}" r="${wheel_radius}" l="${wheel_width}"/>
+    </link>
+
+    <joint name="${name}_joint" type="continuous">
+      <parent link="${name}_mount"/>
+      <child link="${name}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <dynamics damping="0.1" friction="0.05"/>
+    </joint>
+    <gazebo reference="${name}">
+      <mu1>1.0</mu1>
+      <mu2>0.0</mu2>
+      <fdir1>${fdir1_x} ${fdir1_y} 0</fdir1>
+      <kp>1e6</kp>
+      <kd>100</kd>
+      <minDepth>0.001</minDepth>
+    </gazebo>
+    <gazebo reference="${name}_mount">
+      <visual>
+        <material>
+          <ambient>0.08 0.08 0.08 1</ambient>
+          <diffuse>0.08 0.08 0.08 1</diffuse>
+        </material>
+      </visual>
+    </gazebo>
+  </xacro:macro>
+
+  <!-- ============================================================ -->
+  <!-- Links and Joints                                              -->
+  <!-- ============================================================ -->
+
+  <!-- BASE LINK (on ground plane) -->
+  <link name="base_link"/>
+
+  <joint name="base_to_body" type="fixed">
+    <parent link="base_link"/>
+    <child link="body_frame"/>
+    <origin xyz="0 0 ${chassis_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- BODY FRAME -->
+  <!-- body_frame world z = chassis_z; mesh is in assembly coords → offset visual by -chassis_z -->
+  <link name="body_frame">
+    <visual>
+      <origin xyz="0 0 ${-chassis_z}" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file://$(find r2_sim)/meshes/body_frame.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="aluminum"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${body_h/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${body_l} ${body_w} ${body_h}"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="${body_mass}" x="${body_l}" y="${body_w}" z="${body_h}"/>
+  </link>
+
+  <!-- ==================== LEFT SIDE ==================== -->
+
+  <!-- ROCKER LEFT -->
+  <!-- rocker_left world pos = (rocker_pivot_x, -body_half_w, chassis_z - rocker_pivot_z) -->
+  <link name="rocker_left">
+    <visual>
+      <origin xyz="${-rocker_pivot_x} ${body_half_w} ${-(chassis_z - rocker_pivot_z)}" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file://$(find r2_sim)/meshes/rocker_left.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="aluminum"/>
+    </visual>
+    <collision>
+      <origin xyz="0.1 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.400 0.040 0.040"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="${rocker_mass}" x="0.400" y="0.040" z="0.040"/>
+  </link>
+
+  <joint name="rocker_left_joint" type="revolute">
+    <parent link="body_frame"/>
+    <child link="rocker_left"/>
+    <origin xyz="${rocker_pivot_x} ${-body_half_w} ${-rocker_pivot_z}" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-0.10" upper="0.10" effort="100" velocity="1.0"/>
+    <dynamics damping="50.0" friction="5.0"/>
+  </joint>
+
+  <!-- Front wheel left (on rocker) -->
+  <xacro:mecanum_wheel name="wheel_front_left" parent="rocker_left"
+    x="${front_wheel_x - rocker_pivot_x}" y="${-(wheel_y_offset - body_half_w)}" mesh_file="mecanum_wheel_left.STL" bracket_side="left"
+    fdir1_x="1" fdir1_y="-1"/>
+
+  <!-- BOGIE LEFT (on rocker) -->
+  <!-- bogie_left world pos = (bogie_joint_x, -body_half_w, chassis_z - rocker_pivot_z) -->
+  <link name="bogie_left">
+    <visual>
+      <origin xyz="${-bogie_joint_x} ${body_half_w} ${-(chassis_z - rocker_pivot_z)}" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file://$(find r2_sim)/meshes/bogie_left.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="aluminum"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.300 0.030 0.030"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="${bogie_mass}" x="0.300" y="0.030" z="0.030"/>
+  </link>
+
+  <joint name="bogie_left_joint" type="revolute">
+    <parent link="rocker_left"/>
+    <child link="bogie_left"/>
+    <origin xyz="${bogie_joint_x - rocker_pivot_x} 0 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-0.10" upper="0.10" effort="100" velocity="1.0"/>
+    <dynamics damping="50.0" friction="5.0"/>
+  </joint>
+
+  <!-- Mid wheel left (on bogie) -->
+  <xacro:mecanum_wheel name="wheel_mid_left" parent="bogie_left"
+    x="${mid_wheel_x - bogie_joint_x}" y="${-(wheel_y_offset - body_half_w)}" mesh_file="mecanum_wheel_left.STL" bracket_side="left"
+    fdir1_x="1" fdir1_y="-1"/>
+
+  <!-- Rear wheel left (on bogie) -->
+  <xacro:mecanum_wheel name="wheel_rear_left" parent="bogie_left"
+    x="${rear_wheel_x - bogie_joint_x}" y="${-(wheel_y_offset - body_half_w)}" mesh_file="mecanum_wheel_left.STL" bracket_side="left"
+    fdir1_x="1" fdir1_y="1"/>
+
+  <!-- ==================== RIGHT SIDE ==================== -->
+
+  <!-- ROCKER RIGHT -->
+  <!-- rocker_right world pos = (rocker_pivot_x, body_half_w, chassis_z - rocker_pivot_z) -->
+  <link name="rocker_right">
+    <visual>
+      <origin xyz="${-rocker_pivot_x} ${-body_half_w} ${-(chassis_z - rocker_pivot_z)}" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file://$(find r2_sim)/meshes/rocker_right.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="aluminum"/>
+    </visual>
+    <collision>
+      <origin xyz="0.1 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.400 0.040 0.040"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="${rocker_mass}" x="0.400" y="0.040" z="0.040"/>
+  </link>
+
+  <joint name="rocker_right_joint" type="revolute">
+    <parent link="body_frame"/>
+    <child link="rocker_right"/>
+    <origin xyz="${rocker_pivot_x} ${body_half_w} ${-rocker_pivot_z}" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-0.35" upper="0.35" effort="50" velocity="1.0"/>
+    <dynamics damping="50.0" friction="5.0"/>
+  </joint>
+
+  <!-- Front wheel right (on rocker) -->
+  <xacro:mecanum_wheel name="wheel_front_right" parent="rocker_right"
+    x="${front_wheel_x - rocker_pivot_x}" y="${wheel_y_offset - body_half_w}" mesh_file="mecanum_wheel_right.STL" bracket_side="right"
+    fdir1_x="1" fdir1_y="1"/>
+
+  <!-- BOGIE RIGHT (on rocker) -->
+  <!-- bogie_right world pos = (bogie_joint_x, body_half_w, chassis_z - rocker_pivot_z) -->
+  <link name="bogie_right">
+    <visual>
+      <origin xyz="${-bogie_joint_x} ${-body_half_w} ${-(chassis_z - rocker_pivot_z)}" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file://$(find r2_sim)/meshes/bogie_right.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="aluminum"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.300 0.030 0.030"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="${bogie_mass}" x="0.300" y="0.030" z="0.030"/>
+  </link>
+
+  <joint name="bogie_right_joint" type="revolute">
+    <parent link="rocker_right"/>
+    <child link="bogie_right"/>
+    <origin xyz="${bogie_joint_x - rocker_pivot_x} 0 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-0.35" upper="0.35" effort="50" velocity="1.0"/>
+    <dynamics damping="50.0" friction="5.0"/>
+  </joint>
+
+  <!-- Mid wheel right (on bogie) -->
+  <xacro:mecanum_wheel name="wheel_mid_right" parent="bogie_right"
+    x="${mid_wheel_x - bogie_joint_x}" y="${wheel_y_offset - body_half_w}" mesh_file="mecanum_wheel_right.STL" bracket_side="right"
+    fdir1_x="1" fdir1_y="1"/>
+
+  <!-- Rear wheel right (on bogie) -->
+  <xacro:mecanum_wheel name="wheel_rear_right" parent="bogie_right"
+    x="${rear_wheel_x - bogie_joint_x}" y="${wheel_y_offset - body_half_w}" mesh_file="mecanum_wheel_right.STL" bracket_side="right"
+    fdir1_x="1" fdir1_y="-1"/>
+
+  <!-- ==================== LIFT ==================== -->
+
+  <!-- lift_base world pos = (lift_base_x, 0, chassis_z + lift_base_z) -->
+  <link name="lift_base">
+    <visual>
+      <origin xyz="${-lift_base_x} 0 ${-(chassis_z + lift_base_z)}" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file://$(find r2_sim)/meshes/lift_base.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="aluminum"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${lift_height/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.060 0.460 ${lift_height}"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="${lift_mass}" x="0.060" y="0.460" z="${lift_height}"/>
+  </link>
+
+  <joint name="lift_base_joint" type="fixed">
+    <parent link="body_frame"/>
+    <child link="lift_base"/>
+    <origin xyz="${lift_base_x} 0 ${lift_base_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Lift carriage (moves up/down) -->
+  <link name="lift_carriage">
+    <visual>
+      <origin xyz="0.025 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.045 0.430 0.025"/>
+      </geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <origin xyz="0.025 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.045 0.430 0.025"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="0.8" x="0.045" y="0.430" z="0.025"/>
+  </link>
+
+  <joint name="lift_joint" type="prismatic">
+    <parent link="lift_base"/>
+    <child link="lift_carriage"/>
+    <origin xyz="0 0 ${lift_height*0.4}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="${lift_max}" effort="100" velocity="0.3"/>
+    <dynamics damping="10.0" friction="2.0"/>
+  </joint>
+
+  <!-- ==================== GRIPPER ==================== -->
+
+  <link name="gripper_base">
+    <visual>
+      <geometry>
+        <mesh filename="file://$(find r2_sim)/meshes/gripper_base.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="blue"/>
+    </visual>
+    <collision>
+      <origin xyz="0.025 0 0.040" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.045 0.480 0.080"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="${gripper_mass}" x="0.045" y="0.480" z="0.080"/>
+  </link>
+
+  <joint name="gripper_base_joint" type="fixed">
+    <parent link="lift_carriage"/>
+    <child link="gripper_base"/>
+    <origin xyz="0.050 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Left jaw -->
+  <link name="jaw_left">
+    <visual>
+      <origin xyz="0.190 0 0.050" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.380 0.010 0.100"/>
+      </geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <origin xyz="0.190 0 0.050" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.380 0.010 0.100"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="0.5" x="0.380" y="0.010" z="0.100"/>
+  </link>
+
+  <joint name="jaw_left_joint" type="prismatic">
+    <parent link="gripper_base"/>
+    <child link="jaw_left"/>
+    <origin xyz="0 ${-0.176} 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.035" upper="0" effort="50" velocity="0.2"/>
+    <dynamics damping="5.0" friction="1.0"/>
+  </joint>
+
+  <!-- Right jaw -->
+  <link name="jaw_right">
+    <visual>
+      <origin xyz="0.190 0 0.050" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.380 0.010 0.100"/>
+      </geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <origin xyz="0.190 0 0.050" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.380 0.010 0.100"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="0.5" x="0.380" y="0.010" z="0.100"/>
+  </link>
+
+  <joint name="jaw_right_joint" type="prismatic">
+    <parent link="gripper_base"/>
+    <child link="jaw_right"/>
+    <origin xyz="0 ${0.176} 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0" upper="0.035" effort="50" velocity="0.2"/>
+    <dynamics damping="5.0" friction="1.0"/>
+  </joint>
+
+  <!-- Bottom scoop -->
+  <link name="scoop">
+    <visual>
+      <origin xyz="0.185 0 -0.003" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.370 0.300 0.006"/>
+      </geometry>
+      <material name="aluminum"/>
+    </visual>
+    <collision>
+      <origin xyz="0.185 0 -0.003" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.370 0.300 0.006"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="0.3" x="0.370" y="0.300" z="0.006"/>
+  </link>
+
+  <joint name="scoop_joint" type="fixed">
+    <parent link="gripper_base"/>
+    <child link="scoop"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!-- Gazebo Plugins                                                -->
+  <!-- ============================================================ -->
+
   <gazebo>
-    <plugin filename="gz-sim-diff-drive-system"
-            name="gz::sim::systems::DiffDrive">
-      <left_joint>wheel_rear_left_joint</left_joint>
-      <right_joint>wheel_rear_right_joint</right_joint>
-      <wheel_separation>0.45</wheel_separation>
-      <wheel_radius>0.075</wheel_radius>
+    <!-- Mecanum drive controller -->
+    <plugin filename="gz-sim-mecanum-drive-system"
+            name="gz::sim::systems::MecanumDrive">
+      <front_left_joint>wheel_front_left_joint</front_left_joint>
+      <front_right_joint>wheel_front_right_joint</front_right_joint>
+      <back_left_joint>wheel_rear_left_joint</back_left_joint>
+      <back_right_joint>wheel_rear_right_joint</back_right_joint>
+      <wheel_separation>${wheel_y_offset * 2}</wheel_separation>
+      <wheelbase>${front_wheel_x - rear_wheel_x}</wheelbase>
+      <wheel_radius>${wheel_radius}</wheel_radius>
       <odom_publish_frequency>50</odom_publish_frequency>
-      <topic>/cmd_vel</topic>
-      <odom_topic>/odom</odom_topic>
-      <tf_topic>/tf</tf_topic>
+      <topic>cmd_vel</topic>
+      <odom_topic>odom</odom_topic>
+      <tf_topic>tf</tf_topic>
       <frame_id>odom</frame_id>
-      <child_frame_id>base_footprint</child_frame_id>
+      <child_frame_id>base_link</child_frame_id>
     </plugin>
-  </gazebo>
 
-  <!-- Joint state publisher: publishes /joint_states -->
-  <gazebo>
+    <!-- Joint state publisher -->
     <plugin filename="gz-sim-joint-state-publisher-system"
             name="gz::sim::systems::JointStatePublisher">
-      <topic>/joint_states</topic>
+      <joint_name>rocker_left_joint</joint_name>
+      <joint_name>rocker_right_joint</joint_name>
+      <joint_name>bogie_left_joint</joint_name>
+      <joint_name>bogie_right_joint</joint_name>
+      <joint_name>wheel_front_left_joint</joint_name>
+      <joint_name>wheel_front_right_joint</joint_name>
+      <joint_name>wheel_mid_left_joint</joint_name>
+      <joint_name>wheel_mid_right_joint</joint_name>
+      <joint_name>wheel_rear_left_joint</joint_name>
+      <joint_name>wheel_rear_right_joint</joint_name>
+      <joint_name>lift_joint</joint_name>
+      <joint_name>jaw_left_joint</joint_name>
+      <joint_name>jaw_right_joint</joint_name>
+      <topic>joint_states</topic>
     </plugin>
+
+    <!-- Lift + gripper joint position controller -->
+    <plugin filename="gz-sim-joint-position-controller-system"
+            name="gz::sim::systems::JointPositionController">
+      <joint_name>lift_joint</joint_name>
+      <topic>lift_cmd</topic>
+      <p_gain>500</p_gain>
+      <i_gain>10</i_gain>
+      <d_gain>50</d_gain>
+    </plugin>
+
+    <plugin filename="gz-sim-joint-position-controller-system"
+            name="gz::sim::systems::JointPositionController">
+      <joint_name>jaw_left_joint</joint_name>
+      <topic>jaw_left_cmd</topic>
+      <p_gain>200</p_gain>
+      <i_gain>5</i_gain>
+      <d_gain>20</d_gain>
+    </plugin>
+
+    <plugin filename="gz-sim-joint-position-controller-system"
+            name="gz::sim::systems::JointPositionController">
+      <joint_name>jaw_right_joint</joint_name>
+      <topic>jaw_right_cmd</topic>
+      <p_gain>200</p_gain>
+      <i_gain>5</i_gain>
+      <d_gain>20</d_gain>
+    </plugin>
+
+    <!-- IMU sensor -->
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
   </gazebo>
 
-  <!-- Sensor plugin (required even without sensors, for future use) -->
-  <gazebo>
-    <plugin filename="gz-sim-sensors-system"
-            name="gz::sim::systems::Sensors"/>
+  <!-- IMU link -->
+  <link name="imu_link">
+    <visual>
+      <geometry>
+        <box size="0.02 0.02 0.005"/>
+      </geometry>
+      <material name="dark_gray"/>
+    </visual>
+    <inertial>
+      <mass value="0.01"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+    <parent link="body_frame"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 ${body_h + 0.01}" rpy="0 0 0"/>
+  </joint>
+
+  <gazebo reference="imu_link">
+    <sensor name="imu_sensor" type="imu">
+      <always_on>true</always_on>
+      <update_rate>100</update_rate>
+      <topic>imu</topic>
+    </sensor>
+  </gazebo>
+
+  <!-- Suspension spring stiffness — holds rocker/bogie level -->
+  <gazebo reference="rocker_left_joint">
+    <implicitSpringDamper>true</implicitSpringDamper>
+    <springStiffness>500</springStiffness>
+    <springReference>0</springReference>
+  </gazebo>
+  <gazebo reference="rocker_right_joint">
+    <implicitSpringDamper>true</implicitSpringDamper>
+    <springStiffness>500</springStiffness>
+    <springReference>0</springReference>
+  </gazebo>
+  <gazebo reference="bogie_left_joint">
+    <implicitSpringDamper>true</implicitSpringDamper>
+    <springStiffness>500</springStiffness>
+    <springReference>0</springReference>
+  </gazebo>
+  <gazebo reference="bogie_right_joint">
+    <implicitSpringDamper>true</implicitSpringDamper>
+    <springStiffness>500</springStiffness>
+    <springReference>0</springReference>
+  </gazebo>
+
+  <!-- Gazebo material colors -->
+  <gazebo reference="body_frame">
+    <visual>
+      <material>
+        <ambient>0.75 0.75 0.78 1</ambient>
+        <diffuse>0.75 0.75 0.78 1</diffuse>
+      </material>
+    </visual>
+  </gazebo>
+
+  <gazebo reference="lift_base">
+    <visual>
+      <material>
+        <ambient>0.75 0.75 0.78 1</ambient>
+        <diffuse>0.75 0.75 0.78 1</diffuse>
+      </material>
+    </visual>
+  </gazebo>
+
+  <gazebo reference="gripper_base">
+    <visual>
+      <material>
+        <ambient>0.2 0.4 0.8 1</ambient>
+        <diffuse>0.2 0.4 0.8 1</diffuse>
+      </material>
+    </visual>
+  </gazebo>
+
+  <gazebo reference="lift_carriage">
+    <visual>
+      <material>
+        <ambient>1.0 0.5 0.0 1</ambient>
+        <diffuse>1.0 0.5 0.0 1</diffuse>
+      </material>
+    </visual>
   </gazebo>
 
 </robot>

@@ -1,18 +1,25 @@
 """
 A* path planner for the Robocon 2026 Kung Fu Quest field.
 
-Builds an occupancy grid from known field geometry, inflates obstacles
-by the robot radius, and runs A* to find collision-free paths.
+Two planning layers:
+  1. FieldPlanner — occupancy-grid A* for ground-level navigation
+     (outside the Meihua Forests).
+  2. ForestGraph  — platform-to-platform graph search inside a forest,
+     constrained by max step height (default 0.20 m).
 
 Usage:
-    planner = FieldPlanner(resolution=0.05, robot_radius=0.35)
+    planner = FieldPlanner(resolution=0.05, robot_radius=0.25)
     path = planner.plan(start_x, start_y, goal_x, goal_y)
-    # path = [(x1,y1), (x2,y2), ...] in world frame, or [] if no path
+
+    forest = ForestGraph('lf', max_step=0.20)
+    platform_path = forest.plan('r1', 'c2', 'r3', 'c1')
+    # [('r1','c2'), ('r2','c2'), ('r3','c2'), ('r3','c1')]
 """
 
 import heapq
 import math
-from typing import List, Tuple, Optional
+from collections import deque
+from typing import Dict, List, Tuple, Optional
 
 # ── Field dimensions ─────────────────────────────────────────────────────────
 FIELD_W = 12.18   # metres
@@ -292,3 +299,128 @@ class FieldPlanner:
 
         # convert back to world coordinates
         return [self.grid.grid_to_world(r, c) for r, c in smoothed]
+
+
+# ── Platform graph for Meihua Forest ────────────────────────────────────────
+# Platform centres & heights (metres)
+_PLAT_X = {
+    'lf': {'c1': -4.2, 'c2': -3.0, 'c3': -1.8},
+    'rf': {'c1':  1.8, 'c2':  3.0, 'c3':  4.2},
+}
+_PLAT_Y = {'r1': 1.8, 'r2': 0.6, 'r3': -0.6, 'r4': -1.8}
+_PLAT_H = {
+    'lf': {
+        'r1': {'c1': 0.40, 'c2': 0.20, 'c3': 0.40},
+        'r2': {'c1': 0.20, 'c2': 0.40, 'c3': 0.60},
+        'r3': {'c1': 0.40, 'c2': 0.60, 'c3': 0.40},
+        'r4': {'c1': 0.20, 'c2': 0.40, 'c3': 0.20},
+    },
+    'rf': {
+        'r1': {'c1': 0.40, 'c2': 0.20, 'c3': 0.40},
+        'r2': {'c1': 0.60, 'c2': 0.40, 'c3': 0.20},
+        'r3': {'c1': 0.40, 'c2': 0.60, 'c3': 0.40},
+        'r4': {'c1': 0.20, 'c2': 0.40, 'c3': 0.20},
+    },
+}
+_ROWS = ['r1', 'r2', 'r3', 'r4']
+_COLS = ['c1', 'c2', 'c3']
+
+
+class ForestGraph:
+    """
+    Platform-to-platform graph for navigating inside a Meihua Forest.
+
+    The robot steps between adjacent platforms (4-connected) only when
+    the height difference is ≤ max_step.
+
+    Parameters
+    ----------
+    forest : str
+        'lf' (left forest) or 'rf' (right forest).
+    max_step : float
+        Maximum allowed height difference in metres (default 0.20 m).
+    """
+
+    def __init__(self, forest: str = 'lf', max_step: float = 0.20):
+        self.forest = forest
+        self.max_step = max_step
+        self.heights: Dict[Tuple[str, str], float] = {}
+        self.adj: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
+
+        # Build adjacency graph
+        for ri, row in enumerate(_ROWS):
+            for ci, col in enumerate(_COLS):
+                node = (row, col)
+                self.heights[node] = _PLAT_H[forest][row][col]
+                self.adj[node] = []
+
+                # 4-connected neighbours
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nr, nc = ri + dr, ci + dc
+                    if 0 <= nr < len(_ROWS) and 0 <= nc < len(_COLS):
+                        nb = (_ROWS[nr], _COLS[nc])
+                        h_diff = abs(
+                            _PLAT_H[forest][row][col]
+                            - _PLAT_H[forest][_ROWS[nr]][_COLS[nc]]
+                        )
+                        if h_diff <= max_step:
+                            self.adj[node].append(nb)
+
+    def world_pos(self, row: str, col: str) -> Tuple[float, float]:
+        """Return (x, y) world position of the platform centre."""
+        return _PLAT_X[self.forest][col], _PLAT_Y[row]
+
+    def entry_platforms(self) -> List[Tuple[str, str]]:
+        """Platforms on the top edge (row r1) — accessible from the ground."""
+        return [('r1', c) for c in _COLS]
+
+    def plan(self, start_row: str, start_col: str,
+             goal_row: str, goal_col: str
+             ) -> List[Tuple[str, str]]:
+        """
+        BFS shortest path from (start_row, start_col) to (goal_row, goal_col).
+
+        Returns list of (row, col) nodes including start and goal,
+        or empty list if no path exists.
+        """
+        start = (start_row, start_col)
+        goal = (goal_row, goal_col)
+
+        if start == goal:
+            return [start]
+
+        visited = {start}
+        q: deque[Tuple[Tuple[str, str], List[Tuple[str, str]]]] = deque()
+        q.append((start, [start]))
+
+        while q:
+            node, path = q.popleft()
+            for nb in self.adj[node]:
+                if nb in visited:
+                    continue
+                visited.add(nb)
+                new_path = path + [nb]
+                if nb == goal:
+                    return new_path
+                q.append((nb, new_path))
+
+        return []
+
+    def plan_world(self, start_row: str, start_col: str,
+                   goal_row: str, goal_col: str
+                   ) -> List[Tuple[float, float]]:
+        """Plan and return world-frame (x, y) waypoints."""
+        nodes = self.plan(start_row, start_col, goal_row, goal_col)
+        return [self.world_pos(r, c) for r, c in nodes]
+
+    def nearest_entry(self, target_row: str, target_col: str
+                      ) -> Optional[Tuple[str, str]]:
+        """Find the entry platform (row r1) that can reach the target."""
+        best = None
+        best_dist = float('inf')
+        for entry in self.entry_platforms():
+            path = self.plan(entry[0], entry[1], target_row, target_col)
+            if path and len(path) < best_dist:
+                best_dist = len(path)
+                best = entry
+        return best

@@ -56,7 +56,7 @@ def generate_launch_description():
         # 1. Gazebo server (headless — avoids snap/glibc GUI crash)
         #    To open GUI separately: gz sim -g
         ExecuteProcess(
-            cmd=['gz', 'sim', '-s', '-r', world_file],
+            cmd=['gz', 'sim', '-r', world_file],
             output='screen',
         ),
 
